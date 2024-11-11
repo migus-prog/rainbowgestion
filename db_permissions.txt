@@ -1,0 +1,255 @@
+<?php
+// Connexion à la base de données
+$host = 'localhost';
+$dbname = 'rainbow_2';
+$username = 'root';
+$password = '';
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    die("Erreur de connexion : " . $e->getMessage());
+}
+
+// Initialisation des erreurs
+$errors = [];
+
+// Gestion des actions de validation et de rejet pour les permissions et les congés
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $action = $_POST['action'] ?? '';
+    $comment = trim($_POST['comment'] ?? '');
+    $id = (int) ($_POST['id'] ?? -1);
+    $type = $_POST['type'] ?? ''; // Nouveau champ pour différencier permissions et congés
+
+    if ($id > 0 && ($type === 'permission' || $type === 'conge')) {
+        $table = ($type === 'permission') ? 'permissions' : 'demandes_conge';
+        $idColumn = ($type === 'permission') ? 'permission_id' : 'conge_id';
+
+        if ($action === 'approve') {
+            // Approuver la demande
+            $stmt = $pdo->prepare("UPDATE $table SET approbation_daf = 'Approuve' WHERE $idColumn = :id");
+            $stmt->execute(['id' => $id]);
+        } elseif ($action === 'reject') {
+            if (empty($comment)) {
+                $errors[] = "Veuillez ajouter un commentaire avant de rejeter.";
+            } else {
+                // Rejeter la demande avec commentaire
+                $stmt = $pdo->prepare("UPDATE $table SET approbation_daf = 'Rejete', commentaire = :comment WHERE $idColumn = :id");
+                $stmt->execute(['comment' => $comment, 'id' => $id]);
+            }
+        }
+    } else {
+        $errors[] = "Demande invalide.";
+    }
+}
+
+// Récupération des demandes de permissions en attente uniquement
+$stmt = $pdo->query("SELECT permissions.*, employes.nom_complet FROM permissions JOIN employes ON permissions.employe_id = employes.employe_id WHERE permissions.approbation_daf = 'en_attente'");
+$requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Récupération des demandes de congés en attente uniquement
+$stmt_conges = $pdo->query("SELECT demandes_conge.*, employes.nom_complet FROM demandes_conge JOIN employes ON demandes_conge.employe_id = employes.employe_id WHERE demandes_conge.approbation_daf = 'en_attente'");
+$requests_conges = $stmt_conges->fetchAll(PDO::FETCH_ASSOC);
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DRH - Examiner les Demandes</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: "Nunito", sans-serif;
+            font-size: 1rem;
+            background-color: #f4f4f9;
+            color: #343a40;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            height: 100vh;
+        }
+        h1 {
+            margin: 20px;
+            color: #3490dc;
+        }
+        table {
+            width: 80%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3490dc;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        button {
+            padding: 8px 12px;
+            background-color: #38c172;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #2f7f57;
+        }
+        .reject-btn {
+            background-color: #e3342f;
+        }
+        .reject-btn:hover {
+            background-color: #c53030;
+        }
+        .comment-box {
+            display: none;
+            margin-top: 10px;
+        }
+        textarea {
+            width: 100%;
+            height: 60px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .submit-comment {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background-color: #e3342f;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        footer {
+            margin-top: auto;
+            padding: 10px;
+            background-color: #343a40;
+            color: white;
+            width: 100%;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<h1>DRH - Examiner les Demandes de Permissions</h1>
+
+<?php if (!empty($errors)) : ?>
+    <div class="error-messages">
+        <?php foreach ($errors as $error) : ?>
+            <p class="error"><?= htmlspecialchars($error) ?></p>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>
+
+<table>
+    <thead>
+        <tr>
+            <th>Nom de l'Utilisateur</th>
+            <th>Type de Permission</th>
+            <th>Date de Début</th>
+            <th>Date de Fin</th>
+            <th>Approbation DAF</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php foreach ($requests as $request) : ?>
+            <tr>
+                <td><?= htmlspecialchars($request["nom_complet"]) ?></td>
+                <td><?= htmlspecialchars($request["type_permission"]) ?></td>
+                <td><?= htmlspecialchars($request["date_debut"]) ?></td>
+                <td><?= htmlspecialchars($request["date_fin"]) ?></td>
+                <td><?= htmlspecialchars($request["approbation_daf"]) ?></td>
+                <td>
+                    <?php if ($request["approbation_daf"] === "en_attente") : ?>
+                        <form method="post" action="">
+                            <input type="hidden" name="id" value="<?= $request['permission_id'] ?>">
+                            <input type="hidden" name="type" value="permission">
+                            <button type="submit" name="action" value="approve">Approuver</button>
+                            <button type="button" class="reject-btn" onclick="toggleCommentBox(<?= $request['permission_id'] ?>)">Rejeter</button>
+                            <div id="comment-box-<?= $request['permission_id'] ?>" class="comment-box">
+                                <textarea name="comment" placeholder="Ajouter un commentaire pour le rejet"></textarea>
+                                <button type="submit" name="action" value="reject">Envoyer le rejet</button>
+                            </div>
+                        </form>
+                    <?php else : ?>
+                        <?= htmlspecialchars($request["approbation_daf"]) ?>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+    </tbody>
+</table>
+
+<h1>DRH - Examiner les Demandes de Congé</h1>
+
+<table>
+    <thead>
+        <tr>
+            <th>Nom de l'Utilisateur</th>
+            <th>Type de Congé</th>
+            <th>Date de Début</th>
+            <th>Date de Fin</th>
+            <th>Approbation DAF</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php foreach ($requests_conges as $conge) : ?>
+            <tr>
+                <td><?= htmlspecialchars($conge["nom_complet"]) ?></td>
+                <td><?= htmlspecialchars($conge["type_conge"]) ?></td>
+                <td><?= htmlspecialchars($conge["date_debut"]) ?></td>
+                <td><?= htmlspecialchars($conge["date_fin"]) ?></td>
+                <td><?= htmlspecialchars($conge["approbation_daf"]) ?></td>
+                <td>
+                    <?php if ($conge["approbation_daf"] === "en_attente") : ?>
+                        <form method="post" action="">
+                            <input type="hidden" name="id" value="<?= $conge['conge_id'] ?>">
+                            <input type="hidden" name="type" value="conge">
+                            <button type="submit" name="action" value="approve">Approuver</button>
+                            <button type="button" class="reject-btn" onclick="toggleCommentBox(<?= $conge['conge_id'] ?>)">Rejeter</button>
+                            <div id="comment-box-<?= $conge['conge_id'] ?>" class="comment-box">
+                                <textarea name="comment" placeholder="Ajouter un commentaire pour le rejet"></textarea>
+                                <button type="submit" name="action" value="reject">Envoyer le rejet</button>
+                            </div>
+                        </form>
+                    <?php else : ?>
+                        <?= htmlspecialchars($conge["approbation_daf"]) ?>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+    </tbody>
+</table>
+
+<script>
+    function toggleCommentBox(id) {
+        var commentBox = document.getElementById("comment-box-" + id);
+        if (commentBox.style.display === "none" || commentBox.style.display === "") {
+            commentBox.style.display = "block";
+        } else {
+            commentBox.style.display = "none";
+        }
+    }
+</script>
+
+<footer>
+    &copy; 2024 DRH - Gestion des Demandes
+</footer>
+
+</body>
+</html>
